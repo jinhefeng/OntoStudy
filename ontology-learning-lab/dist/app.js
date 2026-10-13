@@ -654,12 +654,17 @@ const studyBridges = {
 };
 
 const STORAGE_KEY = "ontology-learning-workshop.v1";
+const COMMENTS_KEY = "ontology-learning-workshop.comments.v1";
 const CONTENT_VERSION = 2;
 const categories = ["类型", "实例", "状态", "属性", "关系", "观测", "事件"];
 let state = loadState();
+let comments = loadComments();
 let activeId = readHashId() || firstIncompleteId();
 let selectedChoice = null;
 let toastTimer;
+let pendingSelection = null;
+let activeCommentId = null;
+let popoverAnchor = null;
 
 const nav = document.getElementById("lesson-nav");
 const lessonContainer = document.getElementById("lesson-container");
@@ -732,6 +737,410 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function loadComments() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COMMENTS_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(function (item) {
+      return item && typeof item.id === "string" && lessons.some(function (lesson) { return lesson.id === Number(item.lessonId); }) &&
+        (item.scope === "main" || item.scope === "lead") && Number.isInteger(item.start) && Number.isInteger(item.end) &&
+        item.start >= 0 && item.end > item.start && typeof item.quote === "string" && typeof item.text === "string";
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveComments() {
+  try {
+    localStorage.setItem(COMMENTS_KEY, JSON.stringify(comments));
+    updateCommentExportControl();
+    return true;
+  } catch (_) {
+    showToast("浏览器未能保存批注，请检查本机存储空间。");
+    return false;
+  }
+}
+
+function updateCommentExportControl() {
+  const button = document.getElementById("export-comments");
+  const count = document.getElementById("comment-count");
+  if (button) button.disabled = comments.length === 0;
+  if (count) count.textContent = String(comments.length);
+}
+
+function getTextNodes(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let node;
+  while ((node = walker.nextNode())) nodes.push(node);
+  return nodes;
+}
+
+function getTextOffsetWithin(root, container, offset) {
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.setEnd(container, offset);
+  return range.toString().length;
+}
+
+function rangeFromOffsets(root, start, end) {
+  const nodes = getTextNodes(root);
+  let cursor = 0;
+  let startNode = null;
+  let endNode = null;
+  let startOffset = 0;
+  let endOffset = 0;
+  nodes.some(function (node) {
+    const next = cursor + node.nodeValue.length;
+    if (!startNode && start >= cursor && start <= next) {
+      startNode = node;
+      startOffset = start - cursor;
+    }
+    if (end >= cursor && end <= next) {
+      endNode = node;
+      endOffset = end - cursor;
+      return true;
+    }
+    cursor = next;
+    return false;
+  });
+  if (!startNode || !endNode) return null;
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  return range;
+}
+
+function wrapTextRange(root, start, end, commentId) {
+  const nodes = getTextNodes(root);
+  const spans = [];
+  let cursor = 0;
+  nodes.forEach(function (node) {
+    const nodeStart = cursor;
+    const nodeEnd = cursor + node.nodeValue.length;
+    const from = Math.max(start, nodeStart);
+    const to = Math.min(end, nodeEnd);
+    if (to > from) spans.push({ node: node, start: from - nodeStart, end: to - nodeStart });
+    cursor = nodeEnd;
+  });
+  spans.reverse().forEach(function (span) {
+    let target = span.node;
+    if (span.end < target.nodeValue.length) target.splitText(span.end);
+    if (span.start > 0) target = target.splitText(span.start);
+    const mark = document.createElement("mark");
+    mark.className = "annotation-highlight";
+    mark.dataset.commentId = commentId;
+    mark.setAttribute("role", "button");
+    mark.setAttribute("tabindex", "0");
+    mark.setAttribute("aria-label", "查看课程批注");
+    target.parentNode.replaceChild(mark, target);
+    mark.appendChild(target);
+  });
+}
+
+function applyCommentMarks() {
+  lessonContainer.querySelectorAll("mark.annotation-highlight").forEach(function (mark) {
+    mark.parentNode.replaceChild(document.createTextNode(mark.textContent), mark);
+  });
+  const scopes = Array.from(lessonContainer.querySelectorAll("[data-annotation-scope]"));
+  scopes.forEach(function (scope) {
+    const scopeId = scope.dataset.annotationScope;
+    comments.filter(function (comment) { return comment.lessonId === activeId && comment.scope === scopeId; })
+      .slice().sort(function (a, b) { return b.start - a.start; })
+      .forEach(function (comment) {
+        const range = rangeFromOffsets(scope, comment.start, comment.end);
+        if (range && range.toString() === comment.quote) wrapTextRange(scope, comment.start, comment.end, comment.id);
+      });
+  });
+}
+
+function closeAnnotationPopover() {
+  const popover = document.getElementById("annotation-popover");
+  popover.hidden = true;
+  popover.innerHTML = "";
+  activeCommentId = null;
+  pendingSelection = null;
+}
+
+function placeAnnotationPopover(rect) {
+  const popover = document.getElementById("annotation-popover");
+  popoverAnchor = rect;
+  popover.hidden = false;
+  popover.style.left = Math.max(12, Math.min(rect.left, window.innerWidth - 344)) + "px";
+  popover.style.top = Math.max(12, Math.min(rect.bottom + 9, window.innerHeight - 220)) + "px";
+  requestAnimationFrame(function () {
+    if (popover.hidden) return;
+    const box = popover.getBoundingClientRect();
+    let left = Math.min(Math.max(12, popoverAnchor.left), window.innerWidth - box.width - 12);
+    let top = popoverAnchor.bottom + 9;
+    if (top + box.height > window.innerHeight - 12) top = Math.max(12, popoverAnchor.top - box.height - 9);
+    popover.style.left = left + "px";
+    popover.style.top = top + "px";
+  });
+}
+
+function openSelectionPrompt(selection) {
+  pendingSelection = selection;
+  activeCommentId = null;
+  const popover = document.getElementById("annotation-popover");
+  popover.innerHTML = '<div class="annotation-popover-head"><strong>为选中的内容添加批注</strong><button type="button" class="annotation-close" data-comment-action="close" aria-label="关闭">×</button></div>' +
+    '<blockquote class="annotation-quote">' + escapeHtml(selection.quote) + '</blockquote>' +
+    '<div class="annotation-actions"><button type="button" class="small-primary" data-comment-action="compose">写下批注</button><button type="button" class="small-secondary" data-comment-action="close">取消</button></div>';
+  placeAnnotationPopover(selection.rect);
+}
+
+function openComment(comment, anchor) {
+  activeCommentId = comment.id;
+  pendingSelection = null;
+  const popover = document.getElementById("annotation-popover");
+  popover.innerHTML = '<div class="annotation-popover-head"><strong>课程批注 · 第 ' + comment.lessonId + ' 章</strong><button type="button" class="annotation-close" data-comment-action="close" aria-label="关闭">×</button></div>' +
+    '<blockquote class="annotation-quote">' + escapeHtml(comment.quote) + '</blockquote>' +
+    '<p class="annotation-comment-text">' + escapeHtml(comment.text).replace(/\n/g, "<br>") + '</p>' +
+    '<div class="annotation-meta">' + escapeHtml(new Date(comment.updatedAt || comment.createdAt).toLocaleString("zh-CN")) + '</div>' +
+    '<div class="annotation-actions"><button type="button" class="small-secondary" data-comment-action="edit">编辑</button><button type="button" class="small-secondary annotation-delete" data-comment-action="delete">删除</button></div>';
+  placeAnnotationPopover(anchor);
+}
+
+function openCommentEditor(comment) {
+  const popover = document.getElementById("annotation-popover");
+  const isEditing = Boolean(comment);
+  const quote = comment ? comment.quote : pendingSelection.quote;
+  popover.innerHTML = '<div class="annotation-popover-head"><strong>' + (isEditing ? "编辑课程批注" : "写下课程批注") + '</strong><button type="button" class="annotation-close" data-comment-action="cancel-editor" aria-label="取消编辑">×</button></div>' +
+    '<blockquote class="annotation-quote">' + escapeHtml(quote) + '</blockquote>' +
+    '<label class="annotation-label" for="annotation-text">你的建议</label><textarea id="annotation-text" class="annotation-input" maxlength="2000" placeholder="指出需要澄清、补充或调整的内容">' + escapeHtml(comment ? comment.text : "") + '</textarea>' +
+    '<div class="annotation-actions"><button type="button" class="small-primary" data-comment-action="save">保存批注</button><button type="button" class="small-secondary" data-comment-action="cancel-editor">取消</button></div>';
+  placeAnnotationPopover(popoverAnchor);
+  const input = document.getElementById("annotation-text");
+  input.focus();
+  if (isEditing) input.dataset.editing = comment.id;
+}
+
+function handleTextSelection() {
+  const selection = window.getSelection();
+  const scopeNodes = Array.from(lessonContainer.querySelectorAll("[data-annotation-scope]"));
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  const scope = scopeNodes.find(function (node) {
+    return node.contains(range.startContainer) && node.contains(range.endContainer);
+  });
+  if (!scope) return;
+  const selectedText = range.toString();
+  const leading = (selectedText.match(/^\s*/) || [""])[0].length;
+  const trimmed = selectedText.trim();
+  if (!trimmed) return;
+  const beforeStart = document.createRange();
+  beforeStart.selectNodeContents(scope);
+  beforeStart.setEnd(range.startContainer, range.startOffset);
+  const start = beforeStart.toString().length + leading;
+  const end = start + trimmed.length;
+  if (comments.some(function (comment) {
+    return comment.lessonId === activeId && comment.scope === scope.dataset.annotationScope && start < comment.end && end > comment.start;
+  })) return;
+  const rect = range.getBoundingClientRect();
+  const location = describeCommentLocation(scope, range, start, trimmed, activeId);
+  openSelectionPrompt({ lessonId: activeId, scope: scope.dataset.annotationScope, start: start, end: end, quote: trimmed, location: location, rect: rect });
+}
+
+function findCommentBlock(scope, range) {
+  const selector = "p, li, h3, h4, .walkthrough-close, .concept-bridge, .learning-point, .misconception, .resource-link, .study-section, .chapter-intro, .learning-card, .study-card, .walkthrough-card, .misconception-card, .resources-card, .chapter-lead";
+  let element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+    ? range.commonAncestorContainer
+    : range.commonAncestorContainer.parentElement;
+  while (element && scope.contains(element)) {
+    if (element.matches(selector) && element.contains(range.startContainer) && element.contains(range.endContainer)) return element;
+    if (element === scope) break;
+    element = element.parentElement;
+  }
+  return scope;
+}
+
+function siblingTextPosition(element, suffix) {
+  const siblings = Array.from(element.parentElement.children).filter(function (item) { return item.tagName === element.tagName; });
+  return "第 " + (siblings.indexOf(element) + 1) + " " + suffix;
+}
+
+function describeCommentLocation(scope, range, start, quote, lessonId) {
+  const block = findCommentBlock(scope, range);
+  const locationParts = ["第 " + lessonId + " 章"];
+  const intro = block.closest(".chapter-intro");
+  if (scope.dataset.annotationScope === "lead") {
+    const leadTitle = scope.querySelector(".chapter-lead strong");
+    locationParts.push(leadTitle ? leadTitle.textContent.trim() : "章节衔接");
+  } else if (intro) {
+    locationParts.push("本章导读");
+  } else {
+    const card = block.closest(".learning-card, .study-card, .walkthrough-card, .misconception-card, .resources-card");
+    const sectionLabel = card && card.querySelector(":scope > .section-label");
+    if (sectionLabel) {
+      const label = sectionLabel.cloneNode(true);
+      const number = label.querySelector(".label-mark");
+      if (number) number.remove();
+      locationParts.push(label.textContent.trim());
+    }
+    const subsection = block.closest(".study-section") && block.closest(".study-section").querySelector(".study-section-heading h3") ||
+      block.closest(".concept-bridge") && block.closest(".concept-bridge").querySelector("strong") ||
+      block.closest(".walkthrough-card") && block.closest(".walkthrough-card").querySelector(":scope > h3") ||
+      block.closest(".learning-point") && block.closest(".learning-point").querySelector("h3") ||
+      block.closest(".misconception") && block.closest(".misconception").querySelector("h4") ||
+      block.closest(".resource-link") && block.closest(".resource-link").querySelector("strong");
+    if (subsection && subsection.textContent.trim() && locationParts[locationParts.length - 1] !== subsection.textContent.trim()) {
+      locationParts.push(subsection.textContent.trim());
+    }
+  }
+
+  let blockPosition = "本节内容";
+  if (block.matches("p")) blockPosition = siblingTextPosition(block, "段");
+  else if (block.matches("li")) blockPosition = siblingTextPosition(block, "条");
+  else if (block.classList.contains("walkthrough-close")) blockPosition = "串联结果";
+  else if (block.classList.contains("concept-bridge")) blockPosition = "推导连接段";
+  else if (block.classList.contains("learning-point")) blockPosition = "要点卡片";
+  else if (block.classList.contains("misconception")) blockPosition = "易混点卡片";
+  else if (block.classList.contains("resource-link")) blockPosition = "延伸阅读条目";
+  else if (block.matches("h3, h4")) blockPosition = "标题";
+  if (locationParts[locationParts.length - 1] !== blockPosition) locationParts.push(blockPosition);
+
+  const blockStart = getTextOffsetWithin(scope, block, 0);
+  let localStart = Math.max(0, start - blockStart);
+  const blockText = block.textContent || "";
+  if (blockText.slice(localStart, localStart + quote.length) !== quote) {
+    const foundAt = blockText.indexOf(quote);
+    if (foundAt >= 0) localStart = foundAt;
+  }
+  const localEnd = Math.min(blockText.length, localStart + quote.length);
+  const beforeStart = Math.max(0, localStart - 48);
+  const afterEnd = Math.min(blockText.length, localEnd + 48);
+  const compact = function (text) { return text.replace(/\s+/g, " ").trim(); };
+  return {
+    location: locationParts.join(" > "),
+    contextBefore: compact(blockText.slice(beforeStart, localStart)),
+    contextAfter: compact(blockText.slice(localEnd, afterEnd)),
+    contextBeforeOmitted: beforeStart > 0,
+    contextAfterOmitted: afterEnd < blockText.length
+  };
+}
+
+function buildCommentScope(lesson, scopeId) {
+  const scope = document.createElement("div");
+  scope.dataset.annotationScope = scopeId;
+  if (scopeId === "lead") {
+    scope.innerHTML = renderChapterLead(lesson);
+  } else {
+    scope.innerHTML = renderChapterIntro(lesson) + renderScenarioIntro(lesson) + renderStudyContent(lesson);
+  }
+  return scope;
+}
+
+function resolveCommentLocation(comment, cache) {
+  const cacheKey = comment.lessonId + ":" + comment.scope;
+  if (!cache.has(cacheKey)) {
+    const lesson = lessons.find(function (item) { return item.id === comment.lessonId; });
+    cache.set(cacheKey, lesson ? buildCommentScope(lesson, comment.scope) : null);
+  }
+  const scope = cache.get(cacheKey);
+  if (!scope) return null;
+  let start = comment.start;
+  let end = comment.end;
+  let range = rangeFromOffsets(scope, start, end);
+  if (!range || range.toString() !== comment.quote) {
+    const fullText = scope.textContent || "";
+    const firstMatch = fullText.indexOf(comment.quote);
+    if (firstMatch >= 0 && fullText.indexOf(comment.quote, firstMatch + 1) < 0) {
+      start = firstMatch;
+      end = start + comment.quote.length;
+      range = rangeFromOffsets(scope, start, end);
+    }
+  }
+  if (!range || range.toString() !== comment.quote) {
+    if (typeof comment.location === "string") {
+      return {
+        location: "原文位置待确认；此前记录为 " + comment.location,
+        contextBefore: "",
+        contextAfter: "",
+        contextBeforeOmitted: false,
+        contextAfterOmitted: false
+      };
+    }
+    return null;
+  }
+  return describeCommentLocation(scope, range, start, comment.quote, comment.lessonId);
+}
+
+function createCommentId() {
+  return "comment-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
+}
+
+function saveCurrentComment() {
+  const input = document.getElementById("annotation-text");
+  const text = input.value.trim();
+  if (!text) {
+    input.focus();
+    showToast("先写下这条批注，再保存。");
+    return;
+  }
+  const previousComments = comments.map(function (comment) { return Object.assign({}, comment); });
+  const now = new Date().toISOString();
+  const editingId = input.dataset.editing;
+  if (editingId) {
+    const comment = comments.find(function (item) { return item.id === editingId; });
+    if (!comment) return closeAnnotationPopover();
+    comment.text = text;
+    comment.updatedAt = now;
+  } else {
+    comments.push({
+      id: createCommentId(), lessonId: pendingSelection.lessonId, scope: pendingSelection.scope,
+      start: pendingSelection.start, end: pendingSelection.end, quote: pendingSelection.quote,
+      location: pendingSelection.location.location,
+      contextBefore: pendingSelection.location.contextBefore,
+      contextAfter: pendingSelection.location.contextAfter,
+      contextBeforeOmitted: pendingSelection.location.contextBeforeOmitted,
+      contextAfterOmitted: pendingSelection.location.contextAfterOmitted,
+      text: text, createdAt: now, updatedAt: now
+    });
+  }
+  if (!saveComments()) {
+    comments = previousComments;
+    updateCommentExportControl();
+    return;
+  }
+  closeAnnotationPopover();
+  applyCommentMarks();
+  showToast(editingId ? "批注已更新。" : "批注已保存，选中文字已标记。" );
+}
+
+function exportComments() {
+  if (!comments.length) return;
+  const scopeCache = new Map();
+  const ordered = comments.slice().sort(function (a, b) {
+    return a.lessonId - b.lessonId || (a.scope === "lead" ? 1 : 0) - (b.scope === "lead" ? 1 : 0) || a.start - b.start;
+  });
+  const sections = lessons.map(function (lesson) {
+    const items = ordered.filter(function (comment) { return comment.lessonId === lesson.id; });
+    if (!items.length) return "";
+    return "## 第 " + lesson.id + " 章 · " + lesson.title + "\n\n" + items.map(function (comment, index) {
+      const location = resolveCommentLocation(comment, scopeCache);
+      const path = location ? location.location : "原文位置待确认（未能匹配到当前章节文本）";
+      const before = location ? (location.contextBeforeOmitted ? "…" : "") + location.contextBefore : "";
+      const after = location ? location.contextAfter + (location.contextAfterOmitted ? "…" : "") : "";
+      const excerpt = (before ? before + " " : "") + "⟦" + comment.quote + "⟧" + (after ? " " + after : "");
+      const selectedText = comment.quote.split(/\r?\n/).map(function (line) { return "> " + line; }).join("\n");
+      const contextQuote = excerpt.split(/\r?\n/).map(function (line) { return "> " + line; }).join("\n");
+      const note = comment.text.split(/\r?\n/).map(function (line) { return "> " + line; }).join("\n");
+      const created = new Date(comment.createdAt).toLocaleString("zh-CN");
+      return "### 批注 " + String(index + 1).padStart(2, "0") + "\n\n**批注对象（精确选文）：**\n\n" + selectedText + "\n\n**原文位置：** " + path + "\n\n**原文定位上下文：**\n\n" + contextQuote + "\n\n**批注内容：**\n\n" + note + "\n\n**时间：** " + created;
+    }).join("\n\n---\n\n");
+  }).filter(Boolean);
+  const readingGuide = "## AI 阅读说明\n\n- **批注对象（精确选文）** 是这条意见直接针对的原文，请以此判断反馈对象。\n- **原文定位上下文** 用于在课程中找回并核对位置；它包含选文前后的文字，不代表整段都是批注对象。上下文里的 `⟦…⟧` 标出精确选文，省略号 `…` 表示上下文有截断。\n- **原文位置** 按章节和页面内容提供定位线索；若标为“待确认”，表示无法从当前课程文本中可靠匹配，需结合精确选文人工查找。\n- **批注内容** 是学习者希望课程团队处理的意见。请将它与精确选文及原文位置一起理解；不要把定位上下文误读为学习者的批注。";
+  const markdown = "# 本体论学习工坊 · 课程批注\n\n导出时间：" + new Date().toLocaleString("zh-CN") + "\n批注数量：" + ordered.length + "\n\n" + readingGuide + "\n\n" + sections.join("\n\n");
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "ontology-study-comments-" + new Date().toISOString().slice(0, 10) + ".md";
+  link.click();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
 function renderNav() {
@@ -913,11 +1322,12 @@ function renderLesson() {
     '<span>UNIT ' + String(lesson.id).padStart(2, "0") + ' · ' + escapeHtml(lesson.category) + '</span></div>' +
     '<h2>' + escapeHtml(lesson.title) + '</h2><p class="lesson-subtitle">' + escapeHtml(lesson.subtitle) + '</p></div>' +
     '<span class="unit-state' + (done ? " done" : "") + '"><i class="unit-state-dot"></i>' + (done ? "已完成" : "进行中") + '</span></div>' +
+    '<div class="annotation-scope" data-annotation-scope="main">' +
     renderChapterIntro(lesson) +
     renderScenarioIntro(lesson) +
-    renderStudyContent(lesson) +
+    renderStudyContent(lesson) + '</div>' +
     exerciseMarkup(lesson) +
-    renderChapterLead(lesson) +
+    '<div class="annotation-scope" data-annotation-scope="lead">' + renderChapterLead(lesson) + '</div>' +
     '<div class="lesson-footer"><div class="deliverable"><strong>完成产出</strong>' + escapeHtml(lesson.deliverable) + '</div>' +
     '<div class="footer-actions"><button id="prev-unit" class="step-button" type="button"' + (lesson.id === 1 ? " disabled" : "") + '>← 上一单元</button>' +
     '<button id="complete-unit" class="complete-button' + (done ? " done" : "") + '" type="button"' + (!exerciseDone && !done ? " disabled" : "") + '><span class="complete-check">' + (done ? "✓" : "○") + '</span>' + (done ? "已完成本章" : "完成本章") + '</button>' +
@@ -925,6 +1335,8 @@ function renderLesson() {
   renderAside(lesson);
   renderNav();
   updateScoreAverage();
+  applyCommentMarks();
+  updateCommentExportControl();
 }
 
 function renderAll() {
@@ -933,6 +1345,7 @@ function renderAll() {
 
 function navigateTo(id, updateHash) {
   if (!lessons.some(function (lesson) { return lesson.id === id; })) return;
+  closeAnnotationPopover();
   activeId = id;
   selectedChoice = null;
   if (updateHash) history.replaceState(null, "", "#unit-" + id);
@@ -1197,6 +1610,12 @@ function checkExercise(action) {
 }
 
 lessonContainer.addEventListener("click", function (event) {
+  const annotation = event.target.closest("[data-comment-id]");
+  if (annotation) {
+    const comment = comments.find(function (item) { return item.id === annotation.dataset.commentId; });
+    if (comment) openComment(comment, annotation.getBoundingClientRect());
+    return;
+  }
   const choice = event.target.closest("[data-choice]");
   if (choice) {
     selectedChoice = Number(choice.dataset.choice);
@@ -1244,6 +1663,58 @@ lessonContainer.addEventListener("click", function (event) {
   if (event.target.id === "next-unit" && activeId < lessons.length) navigateTo(activeId + 1, true);
 });
 
+lessonContainer.addEventListener("mouseup", handleTextSelection);
+lessonContainer.addEventListener("touchend", handleTextSelection, { passive: true });
+lessonContainer.addEventListener("keydown", function (event) {
+  const annotation = event.target.closest && event.target.closest("[data-comment-id]");
+  if (annotation && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    const comment = comments.find(function (item) { return item.id === annotation.dataset.commentId; });
+    if (comment) openComment(comment, annotation.getBoundingClientRect());
+  }
+});
+
+document.getElementById("annotation-popover").addEventListener("click", function (event) {
+  const button = event.target.closest("[data-comment-action]");
+  if (!button) return;
+  const action = button.dataset.commentAction;
+  if (action === "close") closeAnnotationPopover();
+  if (action === "compose") openCommentEditor(null);
+  if (action === "edit") {
+    const comment = comments.find(function (item) { return item.id === activeCommentId; });
+    if (comment) openCommentEditor(comment);
+  }
+  if (action === "save") saveCurrentComment();
+  if (action === "cancel-editor") {
+    const comment = comments.find(function (item) { return item.id === activeCommentId; });
+    if (comment) openComment(comment, popoverAnchor);
+    else closeAnnotationPopover();
+  }
+  if (action === "delete") {
+    const previousComments = comments;
+    comments = comments.filter(function (item) { return item.id !== activeCommentId; });
+    if (saveComments()) {
+      closeAnnotationPopover();
+      applyCommentMarks();
+      showToast("批注已删除。");
+    } else {
+      comments = previousComments;
+      updateCommentExportControl();
+    }
+  }
+});
+
+document.addEventListener("pointerdown", function (event) {
+  const popover = document.getElementById("annotation-popover");
+  if (!popover.hidden && !popover.contains(event.target) && !event.target.closest("[data-comment-id]")) closeAnnotationPopover();
+});
+document.addEventListener("keydown", function (event) {
+  if (event.key === "Escape") closeAnnotationPopover();
+});
+window.addEventListener("scroll", function () {
+  if (!document.getElementById("annotation-popover").hidden) closeAnnotationPopover();
+}, { passive: true });
+
 lessonContainer.addEventListener("input", function (event) {
   const lesson = currentLesson();
   if (event.target.matches("textarea")) {
@@ -1290,12 +1761,10 @@ nav.addEventListener("click", function (event) {
   if (button) navigateTo(Number(button.dataset.nav), true);
 });
 
-document.getElementById("continue-learning").addEventListener("click", function () {
-  navigateTo(firstIncompleteId(), true);
-});
+document.getElementById("export-comments").addEventListener("click", exportComments);
 
 document.getElementById("reset-progress").addEventListener("click", function () {
-  if (!window.confirm("确定清除本机保存的章节进度、练习草稿和评分吗？")) return;
+  if (!window.confirm("确定清除本机保存的章节进度、练习草稿和评分吗？课程批注会保留。")) return;
   state = emptyState();
   saveState();
   navigateTo(1, true);

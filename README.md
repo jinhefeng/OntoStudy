@@ -11,7 +11,7 @@
 
 ## 使用
 
-无需安装依赖或启动服务，直接用浏览器打开 [`ontology-learning-lab/dist/index.html`](ontology-learning-lab/dist/index.html) 即可。学习进度和练习草稿保存在当前浏览器的本地存储中。
+无需安装依赖或启动服务，直接用浏览器打开 [`ontology-learning-lab/dist/index.html`](ontology-learning-lab/dist/index.html) 即可。学习进度、练习草稿和课程批注保存在当前浏览器的本地存储中；批注可从页面导出，文件会单独标出精确选文并提供 AI 阅读说明。
 
 ## 在远程服务器更新
 

@@ -33,7 +33,7 @@
 
       <div class="sidebar-foot">
         <span class="local-dot" aria-hidden="true"></span>
-        进度保存在本机浏览器
+        <span>进度与批注保存在本机<br>选中文字即可添加批注</span>
       </div>
     </aside>
 
@@ -42,47 +42,10 @@
         <div class="breadcrumb"><span>工程本体论</span><span class="crumb-slash">/</span><strong>供热产品实践路径</strong></div>
         <div class="topbar-actions">
           <span class="version-pill">路线图 v0.1</span>
+          <button id="export-comments" class="text-button" type="button" disabled aria-label="导出全部课程批注">导出批注 <span id="comment-count">0</span></button>
           <button id="reset-progress" class="text-button" type="button">重置学习记录</button>
         </div>
       </header>
-
-      <section class="welcome">
-        <div class="welcome-copy">
-          <div class="eyebrow"><span class="eyebrow-line"></span> ONTOLOGY, MADE PRACTICAL</div>
-          <h1>把语义，变成<br><em>可以验证的工程能力。</em></h1>
-          <p>从供热系统里的对象、关系与数据开始，逐步搭建一套产品和 AI 都能共同理解的语义基础。</p>
-          <div class="welcome-actions">
-            <button id="continue-learning" class="primary-button" type="button">开始这一单元 <span aria-hidden="true">→</span></button>
-            <span class="welcome-note">8 个学习单元 <i>·</i> 1 个贯穿案例 <i>·</i> 每章都有练习</span>
-          </div>
-        </div>
-        <div class="welcome-visual" aria-label="对象、关系、证据组成的供热语义网络示意图">
-          <div class="visual-orbit orbit-one"></div>
-          <div class="visual-orbit orbit-two"></div>
-          <div class="visual-line line-a"></div>
-          <div class="visual-line line-b"></div>
-          <div class="visual-line line-c"></div>
-          <div class="visual-line line-d"></div>
-          <div class="visual-node node-source"><span class="node-glyph">热</span><small>热源</small></div>
-          <div class="visual-node node-station"><span class="node-glyph">站</span><small>换热站</small></div>
-          <div class="visual-node node-sensor"><span class="node-glyph">测</span><small>传感器</small></div>
-          <div class="visual-node node-building"><span class="node-glyph">楼</span><small>热用户</small></div>
-          <div class="visual-node node-alarm"><span class="alarm-pulse"></span><small>告警</small></div>
-          <div class="visual-caption"><span class="caption-dot"></span> 对象 · 关系 · 证据路径</div>
-        </div>
-        <div class="welcome-index"><span>01</span><span>—</span><span>08</span></div>
-      </section>
-
-      <div class="case-strip">
-        <div class="case-icon" aria-hidden="true">↗</div>
-        <div class="case-copy">
-          <span class="case-kicker">贯穿案例 · 告警影响范围追溯</span>
-          <p>从一条告警出发，沿着测点、设备、换热站与热用户，找出影响对象并展示证据。</p>
-        </div>
-        <div class="case-path" aria-label="告警到热用户的关系路径">
-          <span>告警</span><i>→</i><span>测点</span><i>→</i><span>设备</span><i>→</i><span>换热站</span><i>→</i><span>热用户</span>
-        </div>
-      </div>
 
       <section class="workspace">
         <div id="lesson-container" class="lesson-column" aria-live="polite"></div>
@@ -96,5 +59,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="annotation-popover" class="annotation-popover" role="dialog" aria-label="课程批注" hidden></div>
 </body>
 </html>
