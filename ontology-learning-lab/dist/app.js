@@ -659,7 +659,9 @@ const CONTENT_VERSION = 2;
 const categories = ["类型", "实例", "状态", "属性", "关系", "观测", "事件"];
 let state = loadState();
 let comments = loadComments();
-let activeId = readHashId() || firstIncompleteId();
+const initialLessonId = readHashId();
+let isHome = !initialLessonId;
+let activeId = initialLessonId || firstIncompleteId();
 let selectedChoice = null;
 let toastTimer;
 let pendingSelection = null;
@@ -669,6 +671,10 @@ let popoverAnchor = null;
 const nav = document.getElementById("lesson-nav");
 const lessonContainer = document.getElementById("lesson-container");
 const lessonAside = document.getElementById("lesson-aside");
+const workspace = document.querySelector(".workspace");
+const appShell = document.querySelector(".app-shell");
+const sidebar = document.querySelector(".sidebar");
+const breadcrumbCurrent = document.getElementById("breadcrumb-current");
 
 function emptyState() {
   return { contentVersion: CONTENT_VERSION, completed: [], exercises: {}, drafts: {}, ratings: {} };
@@ -1146,7 +1152,7 @@ function exportComments() {
 function renderNav() {
   nav.innerHTML = lessons.map(function (lesson) {
     const done = state.completed.includes(lesson.id);
-    const active = activeId === lesson.id;
+    const active = !isHome && activeId === lesson.id;
     return '<button class="nav-item' + (active ? " active" : "") + (done ? " done" : "") + '" type="button" data-nav="' + lesson.id + '" aria-current="' + (active ? "step" : "false") + '">' +
       '<span class="nav-number">' + String(lesson.id).padStart(2, "0") + '</span>' +
       '<span class="nav-title">' + escapeHtml(lesson.title) + '</span>' +
@@ -1314,6 +1320,11 @@ function renderAside(lesson) {
 }
 
 function renderLesson() {
+  appShell.classList.remove("home-mode");
+  sidebar.hidden = false;
+  workspace.classList.remove("home-workspace");
+  lessonAside.hidden = false;
+  breadcrumbCurrent.textContent = "供热产品实践路径";
   const lesson = currentLesson();
   const done = state.completed.includes(lesson.id);
   const exerciseDone = Boolean((state.exercises["unit-" + lesson.id] || {}).done);
@@ -1339,16 +1350,75 @@ function renderLesson() {
   updateCommentExportControl();
 }
 
+function renderHome() {
+  appShell.classList.add("home-mode");
+  sidebar.hidden = false;
+  workspace.classList.add("home-workspace");
+  lessonAside.hidden = true;
+  breadcrumbCurrent.textContent = "学习首页";
+  const doneCount = lessons.filter(function (lesson) { return state.completed.includes(lesson.id); }).length;
+  const nextLesson = lessons.find(function (lesson) { return !state.completed.includes(lesson.id); }) || lessons[0];
+  const startLabel = doneCount === 0 ? "开始学习" : doneCount === lessons.length ? "回顾课程" : "继续学习";
+  const startNote = doneCount === 0
+    ? "从第 01 单元开始，先把问题说清楚"
+    : doneCount === lessons.length ? "八个单元已完成，随时可以回顾" : "下一步：第 " + String(nextLesson.id).padStart(2, "0") + " 单元 · " + nextLesson.title;
+
+  lessonContainer.innerHTML =
+    '<section class="home-view" aria-labelledby="home-title">' +
+      '<div class="home-hero">' +
+        '<div class="home-hero-copy">' +
+          '<p class="home-eyebrow"><span></span> ENGINEERING ONTOLOGY · LEARNING WORKSHOP</p>' +
+          '<h1 id="home-title">让供热问题，<br>沿着证据找到答案</h1>' +
+          '<p class="home-intro">从“这条告警影响哪些用户？”开始，用八个循序渐进的单元，学习如何把对象、关系、数据与规则连成可验证的语义模型。</p>' +
+          '<div class="home-actions"><button class="home-primary" type="button" data-home-start>' + startLabel + '<span aria-hidden="true">→</span></button><a class="home-secondary" href="#home-course-path">浏览八个单元 <span aria-hidden="true">↓</span></a></div>' +
+          '<p class="home-start-note">' + escapeHtml(startNote) + '</p>' +
+        '</div>' +
+        '<div class="home-route" aria-label="贯穿课程的供热告警追溯案例：告警、测点、设备、换热站、热用户">' +
+          '<div class="route-heading"><span class="route-pulse"></span><span>课程贯穿案例</span><span class="route-case">供热追溯</span></div>' +
+          '<div class="route-steps">' +
+            '<div class="route-step"><span class="route-step-index">01</span><span><small>告警</small><strong>Alarm_A17</strong></span><i>↘</i></div>' +
+            '<div class="route-step"><span class="route-step-index">02</span><span><small>测点与设备</small><strong>关联运行证据</strong></span><i>↘</i></div>' +
+            '<div class="route-step"><span class="route-step-index">03</span><span><small>供热关系</small><strong>追溯影响路径</strong></span><i>↘</i></div>' +
+            '<div class="route-step route-step-final"><span class="route-step-index">04</span><span><small>影响范围</small><strong>定位相关热用户</strong></span><span class="route-check">✓</span></div>' +
+          '</div>' +
+          '<p class="route-footnote">每一步都保留关系路径、数据来源与时间依据</p>' +
+        '</div>' +
+      '</div>' +
+      '<section class="home-course" id="home-course-path" aria-labelledby="home-course-title">' +
+        '<div class="home-section-heading"><div><p class="home-section-kicker">YOUR LEARNING PATH</p><h2 id="home-course-title">八个单元，逐步把语义落到产品</h2><p>从概念和标准，到数据映射、Agent 应用与治理评估。</p></div></div>' +
+        '<div class="home-unit-grid">' + lessons.map(function (lesson) {
+          const done = state.completed.includes(lesson.id);
+          return '<button class="home-unit' + (done ? " is-done" : "") + '" type="button" data-home-unit="' + lesson.id + '" aria-label="打开第 ' + lesson.id + ' 单元：' + escapeHtml(lesson.title) + '">' +
+            '<span class="home-unit-top"><span>UNIT ' + String(lesson.id).padStart(2, "0") + '</span><span class="home-unit-status">' + (done ? "✓ 已完成" : escapeHtml(lesson.category)) + '</span></span>' +
+            '<strong>' + escapeHtml(lesson.title) + '</strong><span class="home-unit-arrow" aria-hidden="true">↗</span></button>';
+        }).join("") + '</div>' +
+      '</section>' +
+      '<div class="home-note"><span class="home-note-icon" aria-hidden="true">✳</span><p><strong>打开即学，进度留在本机。</strong> 课程、练习和批注可离线使用；学习记录会保存在当前浏览器中。</p></div>' +
+    '</section>';
+  renderNav();
+  updateCommentExportControl();
+}
+
 function renderAll() {
-  renderLesson();
+  if (isHome) renderHome();
+  else renderLesson();
 }
 
 function navigateTo(id, updateHash) {
   if (!lessons.some(function (lesson) { return lesson.id === id; })) return;
   closeAnnotationPopover();
+  isHome = false;
   activeId = id;
   selectedChoice = null;
   if (updateHash) history.replaceState(null, "", "#unit-" + id);
+  renderAll();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showHome(updateHash) {
+  closeAnnotationPopover();
+  isHome = true;
+  if (updateHash) history.replaceState(null, "", "#home");
   renderAll();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1610,6 +1680,16 @@ function checkExercise(action) {
 }
 
 lessonContainer.addEventListener("click", function (event) {
+  const homeStart = event.target.closest("[data-home-start]");
+  if (homeStart) {
+    navigateTo(firstIncompleteId(), true);
+    return;
+  }
+  const homeUnit = event.target.closest("[data-home-unit]");
+  if (homeUnit) {
+    navigateTo(Number(homeUnit.dataset.homeUnit), true);
+    return;
+  }
   const annotation = event.target.closest("[data-comment-id]");
   if (annotation) {
     const comment = comments.find(function (item) { return item.id === annotation.dataset.commentId; });
@@ -1765,15 +1845,27 @@ document.getElementById("export-comments").addEventListener("click", exportComme
 
 document.getElementById("reset-progress").addEventListener("click", function () {
   if (!window.confirm("确定清除本机保存的章节进度、练习草稿和评分吗？课程批注会保留。")) return;
+  const wasHome = isHome;
   state = emptyState();
   saveState();
-  navigateTo(1, true);
+  if (wasHome) renderAll();
+  else navigateTo(1, true);
   showToast("学习记录已清除。");
 });
 
+document.querySelector(".brand").addEventListener("click", function (event) {
+  event.preventDefault();
+  showHome(true);
+});
+
 window.addEventListener("hashchange", function () {
+  if (window.location.hash === "#home") {
+    if (!isHome) showHome(false);
+    return;
+  }
   const id = readHashId();
-  if (id && id !== activeId) navigateTo(id, false);
+  if (id && (id !== activeId || isHome)) navigateTo(id, false);
+  else if (!window.location.hash && !isHome) showHome(false);
 });
 
 renderAll();

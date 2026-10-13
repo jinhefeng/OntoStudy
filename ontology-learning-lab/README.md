@@ -4,7 +4,9 @@
 
 ## 打开
 
-直接用浏览器打开 dist/index.html，无需安装依赖或启动服务。
+直接用浏览器打开 dist/index.html，无需安装依赖或启动服务。打开后会先进入学习首页，可开始或继续学习，也可从八个单元卡片进入指定章节。
+
+开源地址：[github.com/jinhefeng/OntoStudy](https://github.com/jinhefeng/OntoStudy)，以小尺寸链接显示在页面页脚。
 
 ## 学习功能
 
